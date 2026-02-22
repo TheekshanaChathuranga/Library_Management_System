@@ -1,0 +1,28 @@
+# Deploy Horizontal Pod Autoscaler
+# Run: ansible-playbook -i inventory.yml playbooks/08-deploy-hpa.yml
+---
+- name: Deploy HPA
+  hosts: masters
+  become: yes
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  vars:
+    k8s_dir: /home/rajkumar/Documents/DevOps_Projects/Wso2/LMS/k8s
+  tasks:
+    - name: Copy HPA manifest
+      copy:
+        src: "{{ k8s_dir }}/hpa.yml"
+        dest: /tmp/hpa.yml
+
+    - name: Deploy HPA
+      shell: kubectl apply -f /tmp/hpa.yml
+      ignore_errors: yes
+
+    - name: Verify HPA
+      shell: kubectl get hpa -n lms
+      register: hpa_status
+      ignore_errors: yes
+
+    - name: Display HPA status
+      debug:
+        msg: "{{ hpa_status.stdout_lines }}"

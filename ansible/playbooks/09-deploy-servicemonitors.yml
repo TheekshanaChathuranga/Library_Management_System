@@ -1,0 +1,28 @@
+# Deploy Prometheus ServiceMonitors
+# Run: ansible-playbook -i inventory.yml playbooks/09-deploy-servicemonitors.yml
+---
+- name: Deploy Prometheus ServiceMonitors
+  hosts: masters
+  become: yes
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  vars:
+    k8s_dir: /home/rajkumar/Documents/DevOps_Projects/Wso2/LMS/k8s
+  tasks:
+    - name: Copy Prometheus ServiceMonitors manifest
+      copy:
+        src: "{{ k8s_dir }}/prometheus-servicemonitors.yml"
+        dest: /tmp/prometheus-servicemonitors.yml
+
+    - name: Deploy Prometheus ServiceMonitors
+      shell: kubectl apply -f /tmp/prometheus-servicemonitors.yml
+      ignore_errors: yes
+
+    - name: Verify ServiceMonitors
+      shell: kubectl get servicemonitor -n lms
+      register: sm_status
+      ignore_errors: yes
+
+    - name: Display ServiceMonitors status
+      debug:
+        msg: "{{ sm_status.stdout_lines }}"

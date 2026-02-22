@@ -1,0 +1,157 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: lms-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-scripts:/docker-entrypoint-initdb.d
+    networks:
+      - lms-network
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: lms-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - lms-network
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  catalog-api:
+    build:
+      context: ./CatalogService
+      dockerfile: Dockerfile
+    container_name: catalog-api
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__CatalogDatabase=Host=postgres;Port=5432;Database=catalogdb;Username=postgres;Password=postgres
+      - ConnectionStrings__Redis=redis:6379,abortConnect=false
+      - BasicAuth__Username=admin
+      - BasicAuth__Password=password123
+      - CacheSettings__Enabled=true
+    ports:
+      - "5001:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - lms-network
+
+  inventory-api:
+    build:
+      context: ./InventoryService
+      dockerfile: Dockerfile
+    container_name: inventory-api
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__Inventory=Host=postgres;Port=5432;Database=inventorydb;Username=postgres;Password=postgres
+      - CatalogService__BaseUrl=http://catalog-api:8080
+    ports:
+      - "5002:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      catalog-api:
+        condition: service_started
+    networks:
+      - lms-network
+
+  useridentity-api:
+    build:
+      context: ./UserIdentityService
+      dockerfile: src/UserIdentityService.Api/Dockerfile
+    container_name: useridentity-api
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__UserIdentityDb=Host=postgres;Port=5432;Database=useridentity;Username=postgres;Password=postgres
+      - Redis__Configuration=redis:6379
+      - Jwt__Issuer=catalog-suite
+      - Jwt__Audience=catalog-suite-clients
+      - Jwt__SigningKey=PLEASE_CHANGE_ME_SUPER_SECRET_KEY_12345
+    ports:
+      - "5003:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - lms-network
+
+  borrowingreturns-api:
+    build:
+      context: ./BorrowingReturnsService
+      dockerfile: Dockerfile
+    container_name: borrowingreturns-api
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=borrowing_returns_db;Username=postgres;Password=postgres
+      - ConnectionStrings__Redis=redis:6379,abortConnect=false
+      - ServiceUrls__CatalogService=http://catalog-api:8080
+      - ServiceUrls__InventoryService=http://inventory-api:8080
+      - ServiceUrls__UserIdentityService=http://useridentity-api:8080
+      - CatalogService__Username=admin
+      - CatalogService__Password=password123
+      - UserIdentity__ServiceAccount__Email=admin@library.local
+      - UserIdentity__ServiceAccount__Password=ChangeMe!123
+      - Jwt__Issuer=BorrowingReturnsService
+      - Jwt__Audience=BorrowingReturnsClient
+      - Jwt__Key=your-256-bit-secret-key-here-min-32-chars
+    ports:
+      - "5004:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      catalog-api:
+        condition: service_started
+      inventory-api:
+        condition: service_started
+      useridentity-api:
+        condition: service_started
+    networks:
+      - lms-network
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: lms-frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - catalog-api
+      - inventory-api
+      - useridentity-api
+      - borrowingreturns-api
+    networks:
+      - lms-network
+
+volumes:
+  postgres_data:
+  redis_data:
+
+
+networks:
+  lms-network:
+    driver: bridge

@@ -1,0 +1,57 @@
+# Deploy Database Layer (PostgreSQL + Redis)
+# Run: ansible-playbook -i inventory.yml playbooks/04-deploy-database.yml
+---
+- name: Deploy Database Layer
+  hosts: masters
+  become: yes
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  vars:
+    k8s_dir: /home/rajkumar/Documents/DevOps_Projects/Wso2/LMS/k8s
+  tasks:
+    - name: Copy namespace manifest
+      copy:
+        src: "{{ k8s_dir }}/namespace.yml"
+        dest: /tmp/namespace.yml
+
+    - name: Create LMS namespace
+      shell: kubectl apply -f /tmp/namespace.yml
+
+    - name: Copy PostgreSQL manifests
+      copy:
+        src: "{{ item }}"
+        dest: /tmp/
+      loop:
+        - "{{ k8s_dir }}/postgres-secret.yml"
+        - "{{ k8s_dir }}/postgres-pvc.yml"
+        - "{{ k8s_dir }}/postgres.yml"
+
+    - name: Deploy PostgreSQL
+      shell: |
+        kubectl apply -f /tmp/postgres-secret.yml
+        kubectl apply -f /tmp/postgres-pvc.yml
+        kubectl apply -f /tmp/postgres.yml
+
+    - name: Wait for PostgreSQL
+      shell: kubectl wait --for=condition=ready pod -l app=postgres -n lms --timeout=300s
+      ignore_errors: yes
+
+    - name: Copy Redis manifest
+      copy:
+        src: "{{ k8s_dir }}/redis.yml"
+        dest: /tmp/redis.yml
+
+    - name: Deploy Redis
+      shell: kubectl apply -f /tmp/redis.yml
+
+    - name: Wait for Redis
+      shell: kubectl wait --for=condition=ready pod -l app=redis -n lms --timeout=300s
+      ignore_errors: yes
+
+    - name: Verify Database Layer
+      shell: kubectl get pods -n lms
+      register: db_pods
+
+    - name: Display Database status
+      debug:
+        msg: "{{ db_pods.stdout_lines }}"

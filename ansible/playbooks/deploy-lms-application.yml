@@ -1,0 +1,151 @@
+# Ansible Playbook: Deploy LMS Application
+# Use Case: Deploy all LMS microservices to K3s cluster
+# Run: ansible-playbook -i inventory.yml playbooks/deploy-lms-application.yml
+---
+- name: Deploy LMS Application
+  hosts: masters
+  become: yes
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  vars:
+    k8s_manifests_path: "{{ playbook_dir }}/../../cicd_pipeline/LMS/k8s"
+  tasks:
+    # ============================================
+    # Prerequisites
+    # ============================================
+    - name: Create LMS namespace
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Namespace
+          metadata:
+            name: lms
+            labels:
+              name: lms
+              linkerd.io/inject: enabled
+
+    # ============================================
+    # Deploy Database Layer
+    # ============================================
+    - name: Deploy PostgreSQL secrets
+      kubernetes.core.k8s:
+        state: present
+        src: "{{ k8s_manifests_path }}/postgres-secret.yml"
+
+    - name: Deploy PostgreSQL PVC
+      kubernetes.core.k8s:
+        state: present
+        src: "{{ k8s_manifests_path }}/postgres-pvc.yml"
+
+    - name: Deploy PostgreSQL
+      kubernetes.core.k8s:
+        state: present
+        src: "{{ k8s_manifests_path }}/postgres.yml"
+
+    - name: Wait for PostgreSQL to be ready
+      shell: kubectl wait --for=condition=ready pod -l app=postgres -n lms --timeout=300s
+
+    # ============================================
+    # Deploy Cache Layer
+    # ============================================
+    - name: Deploy Redis
+      kubernetes.core.k8s:
+        state: present
+        src: "{{ k8s_manifests_path }}/redis.yml"
+
+    - name: Wait for Redis to be ready
+      shell: kubectl wait --for=condition=ready pod -l app=redis -n lms --timeout=300s
+
+    # ============================================
+    # Deploy API Services
+    # ============================================
+    - name: Deploy Catalog API
+      kubernetes.core.k8s:
+        state: present
+        src: "{{ k8s_manifests_path }}/catalog-api.yml"
+
+    - name: Deploy Inventory API
+      kubernetes.core.k8s:
+        state: present
+        src: "{{ k8s_manifests_path }}/inventory-api.yml"
+
+    - name: Deploy UserIdentity API
+      kubernetes.core.k8s:
+        state: present
+        src: "{{ k8s_manifests_path }}/useridentity-api.yml"
+
+    - name: Deploy BorrowingReturns API
+      kubernetes.core.k8s:
+        state: present
+        src: "{{ k8s_manifests_path }}/borrowingreturns-api.yml"
+
+    # ============================================
+    # Deploy Frontend
+    # ============================================
+    - name: Deploy Frontend ConfigMap
+      kubernetes.core.k8s:
+        state: present
+        src: "{{ k8s_manifests_path }}/frontend-configmap.yml"
+
+    - name: Deploy Frontend
+      kubernetes.core.k8s:
+        state: present
+        src: "{{ k8s_manifests_path }}/frontend.yml"
+
+    # ============================================
+    # Deploy HPA (Autoscaling)
+    # ============================================
+    - name: Deploy HPA for all services
+      kubernetes.core.k8s:
+        state: present
+        src: "{{ k8s_manifests_path }}/hpa.yml"
+
+    # ============================================
+    # Wait for Deployments
+    # ============================================
+    - name: Wait for all deployments to be ready
+      shell: |
+        kubectl rollout status deployment/{{ item }} -n lms --timeout=300s
+      loop:
+        - catalog-api
+        - inventory-api
+        - useridentity-api
+        - borrowingreturns-api
+        - frontend
+      ignore_errors: yes
+
+    # ============================================
+    # Restart pods to inject Linkerd sidecars
+    # ============================================
+    - name: Restart deployments for Linkerd injection
+      shell: kubectl rollout restart deployment -n lms
+      when: "'linkerd.io/inject' in lookup('file', k8s_manifests_path + '/namespace.yml', errors='ignore')"
+      ignore_errors: yes
+
+    # ============================================
+    # Verification
+    # ============================================
+    - name: Get all pods in LMS namespace
+      shell: kubectl get pods -n lms -o wide
+      register: lms_pods
+
+    - name: Get all services in LMS namespace
+      shell: kubectl get svc -n lms
+      register: lms_services
+
+    - name: Get HPA status
+      shell: kubectl get hpa -n lms
+      register: hpa_status
+
+    - name: Display deployment status
+      debug:
+        msg:
+          - "=== LMS Pods ==="
+          - "{{ lms_pods.stdout_lines }}"
+          - ""
+          - "=== LMS Services ==="
+          - "{{ lms_services.stdout_lines }}"
+          - ""
+          - "=== HPA Status ==="
+          - "{{ hpa_status.stdout_lines }}"

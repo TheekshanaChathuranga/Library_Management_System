@@ -1,0 +1,267 @@
+# ArgoCD Rollout Strategies - Canary and Blue-Green Deployments
+# Requires: kubectl apply -f https://github.com/argoproj/argo-rollouts/releases/latest/download/install.yaml
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argo-rollouts
+---
+# Install Argo Rollouts Controller (run this first)
+# kubectl apply -n argo-rollouts -f https://github.com/argoproj/argo-rollouts/releases/latest/download/install.yaml
+---
+# ============================================
+# CANARY DEPLOYMENT - Frontend
+# Use Case: Gradual rollout with traffic shifting
+# ============================================
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: frontend-canary
+  namespace: lms
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+      - name: frontend
+        image: lmswso2/frontend:latest
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+  strategy:
+    canary:
+      # Canary steps - gradual traffic increase
+      steps:
+      - setWeight: 10      # 10% traffic to canary
+      - pause: {duration: 2m}  # Wait 2 minutes
+      - setWeight: 25      # 25% traffic
+      - pause: {duration: 2m}
+      - setWeight: 50      # 50% traffic
+      - pause: {duration: 5m}
+      - setWeight: 75      # 75% traffic
+      - pause: {duration: 2m}
+      # 100% happens automatically after all steps
+      
+      # Automatic rollback on failure
+      analysis:
+        templates:
+        - templateName: success-rate
+        startingStep: 2  # Start analysis after first weight increase
+        args:
+        - name: service-name
+          value: frontend
+      
+      # Traffic routing
+      canaryService: frontend-canary
+      stableService: frontend-stable
+      
+      # Anti-affinity for canary pods
+      antiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+          weight: 100
+---
+# Canary and Stable Services for Frontend
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-stable
+  namespace: lms
+spec:
+  selector:
+    app: frontend
+  ports:
+  - port: 80
+    targetPort: 80
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend-canary
+  namespace: lms
+spec:
+  selector:
+    app: frontend
+  ports:
+  - port: 80
+    targetPort: 80
+---
+# ============================================
+# BLUE-GREEN DEPLOYMENT - Catalog API
+# Use Case: Instant switch with easy rollback
+# ============================================
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: catalog-api-bluegreen
+  namespace: lms
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: catalog-api
+  template:
+    metadata:
+      labels:
+        app: catalog-api
+    spec:
+      containers:
+      - name: catalog-api
+        image: lmswso2/catalog-api:latest
+        ports:
+        - containerPort: 8080
+        env:
+        - name: ASPNETCORE_URLS
+          value: "http://+:8080"
+        - name: ConnectionStrings__DefaultConnection
+          valueFrom:
+            secretKeyRef:
+              name: postgres-secret
+              key: connection-string
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5
+  strategy:
+    blueGreen:
+      # Active service (receives production traffic)
+      activeService: catalog-api-active
+      # Preview service (for testing before promotion)
+      previewService: catalog-api-preview
+      
+      # Auto-promotion after successful analysis
+      autoPromotionEnabled: true
+      autoPromotionSeconds: 300  # 5 minutes
+      
+      # Scale down delay for old version
+      scaleDownDelaySeconds: 300
+      
+      # Pre-promotion analysis
+      prePromotionAnalysis:
+        templates:
+        - templateName: success-rate
+        args:
+        - name: service-name
+          value: catalog-api-preview
+      
+      # Post-promotion analysis (rollback if fails)
+      postPromotionAnalysis:
+        templates:
+        - templateName: success-rate
+        args:
+        - name: service-name
+          value: catalog-api-active
+---
+# Blue-Green Services for Catalog API
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalog-api-active
+  namespace: lms
+spec:
+  selector:
+    app: catalog-api
+  ports:
+  - port: 8080
+    targetPort: 8080
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalog-api-preview
+  namespace: lms
+spec:
+  selector:
+    app: catalog-api
+  ports:
+  - port: 8080
+    targetPort: 8080
+---
+# ============================================
+# ANALYSIS TEMPLATES - For Automatic Rollback
+# ============================================
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: success-rate
+  namespace: lms
+spec:
+  args:
+  - name: service-name
+  metrics:
+  - name: success-rate
+    # Query Prometheus for success rate
+    interval: 1m
+    count: 5
+    successCondition: result[0] >= 0.95  # 95% success rate required
+    failureLimit: 3
+    provider:
+      prometheus:
+        address: http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
+        query: |
+          sum(rate(http_requests_total{service="{{args.service-name}}",status=~"2.."}[5m])) 
+          / sum(rate(http_requests_total{service="{{args.service-name}}"}[5m]))
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: latency-check
+  namespace: lms
+spec:
+  args:
+  - name: service-name
+  metrics:
+  - name: latency-p99
+    interval: 1m
+    count: 5
+    successCondition: result[0] < 500  # P99 latency < 500ms
+    failureLimit: 3
+    provider:
+      prometheus:
+        address: http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
+        query: |
+          histogram_quantile(0.99, 
+            sum(rate(http_request_duration_seconds_bucket{service="{{args.service-name}}"}[5m])) 
+            by (le)
+          ) * 1000
+---
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: error-rate
+  namespace: lms
+spec:
+  args:
+  - name: service-name
+  metrics:
+  - name: error-rate
+    interval: 1m
+    count: 5
+    successCondition: result[0] < 0.05  # Error rate < 5%
+    failureLimit: 2
+    provider:
+      prometheus:
+        address: http://prometheus-kube-prometheus-prometheus.monitoring.svc.cluster.local:9090
+        query: |
+          sum(rate(http_requests_total{service="{{args.service-name}}",status=~"5.."}[5m])) 
+          / sum(rate(http_requests_total{service="{{args.service-name}}"}[5m]))

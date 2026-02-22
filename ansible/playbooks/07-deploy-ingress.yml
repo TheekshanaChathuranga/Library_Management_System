@@ -1,0 +1,26 @@
+# Deploy Ingress Routes
+# Run: ansible-playbook -i inventory.yml playbooks/07-deploy-ingress.yml
+---
+- name: Deploy Ingress Routes
+  hosts: masters
+  become: yes
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  vars:
+    k8s_dir: /home/rajkumar/Documents/DevOps_Projects/Wso2/LMS/k8s
+  tasks:
+    - name: Copy Ingress Routes manifest
+      copy:
+        src: "{{ k8s_dir }}/ingress-routes.yml"
+        dest: /tmp/ingress-routes.yml
+
+    - name: Deploy Ingress Routes
+      shell: kubectl apply -f /tmp/ingress-routes.yml
+
+    - name: Verify Ingress
+      shell: kubectl get ingress -A
+      register: ingress_status
+
+    - name: Display Ingress status
+      debug:
+        msg: "{{ ingress_status.stdout_lines }}"

@@ -1,0 +1,120 @@
+# Ansible Playbook: Deploy Security Components
+# Use Case: Install Vault, Linkerd, Network Policies for Zero Trust
+# Run: ansible-playbook -i inventory.yml playbooks/deploy-security.yml
+---
+- name: Deploy Security Components
+  hosts: masters
+  become: yes
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  tasks:
+    # ============================================
+    # HashiCorp Vault (Fixed Version)
+    # ============================================
+    - name: Copy Vault manifest to master
+      copy:
+        src: /home/rajkumar/Documents/DevOps_Projects/Wso2/LMS/k8s/vault-fixed.yml
+        dest: /tmp/vault-fixed.yml
+
+    - name: Deploy HashiCorp Vault
+      shell: kubectl apply -f /tmp/vault-fixed.yml
+
+    - name: Wait for Vault to be ready
+      shell: kubectl wait --for=condition=ready pod -l app=vault -n vault --timeout=300s
+      register: vault_ready
+      ignore_errors: yes
+
+    - name: Get Vault pod name
+      shell: kubectl get pods -n vault -l app=vault -o jsonpath='{.items[0].metadata.name}'
+      register: vault_pod
+      when: vault_ready.rc == 0
+
+    - name: Check if Vault is initialized
+      shell: kubectl exec -n vault {{ vault_pod.stdout }} -- vault status -format=json
+      register: vault_status
+      ignore_errors: yes
+      when: vault_ready.rc == 0
+
+    - name: Initialize Vault (if not initialized)
+      shell: |
+        kubectl exec -n vault {{ vault_pod.stdout }} -- vault operator init -key-shares=1 -key-threshold=1 -format=json > /tmp/vault-keys.json
+      when: 
+        - vault_ready.rc == 0
+        - vault_status.rc != 0 or (vault_status.stdout | from_json).initialized == false
+      ignore_errors: yes
+
+    - name: Display Vault initialization message
+      debug:
+        msg: "Vault keys saved to /tmp/vault-keys.json on master node. KEEP THIS FILE SECURE!"
+      when: vault_ready.rc == 0
+
+    # ============================================
+    # Linkerd Service Mesh (mTLS)
+    # ============================================
+    - name: Install Linkerd CLI
+      shell: |
+        curl --proto '=https' --tlsv1.2 -sSfL https://run.linkerd.io/install | sh
+        export PATH=$PATH:$HOME/.linkerd2/bin
+      args:
+        creates: /root/.linkerd2/bin/linkerd
+
+    - name: Run Linkerd pre-check
+      shell: /root/.linkerd2/bin/linkerd check --pre
+      register: linkerd_precheck
+      ignore_errors: yes
+
+    - name: Install Linkerd CRDs
+      shell: /root/.linkerd2/bin/linkerd install --crds | kubectl apply -f -
+      when: linkerd_precheck.rc == 0
+
+    - name: Install Linkerd control plane
+      shell: /root/.linkerd2/bin/linkerd install | kubectl apply -f -
+      when: linkerd_precheck.rc == 0
+
+    - name: Wait for Linkerd to be ready
+      shell: /root/.linkerd2/bin/linkerd check
+      register: linkerd_check
+      retries: 10
+      delay: 30
+      until: linkerd_check.rc == 0
+      ignore_errors: yes
+
+    - name: Install Linkerd Viz extension
+      shell: /root/.linkerd2/bin/linkerd viz install | kubectl apply -f -
+      when: linkerd_check.rc == 0
+
+    - name: Enable Linkerd injection for LMS namespace
+      shell: kubectl label namespace lms linkerd.io/inject=enabled --overwrite
+      ignore_errors: yes
+
+    # ============================================
+    # Zero Trust Network Policies
+    # ============================================
+    - name: Copy Network Policies manifest
+      copy:
+        src: /home/rajkumar/Documents/DevOps_Projects/Wso2/LMS/k8s/network-policies.yml
+        dest: /tmp/network-policies.yml
+      ignore_errors: yes
+
+    - name: Deploy Zero Trust Network Policies
+      shell: kubectl apply -f /tmp/network-policies.yml || true
+      ignore_errors: yes
+
+    # ============================================
+    # Verification
+    # ============================================
+    - name: Verify security components
+      shell: |
+        echo "=== Vault Status ==="
+        kubectl get pods -n vault
+        echo ""
+        echo "=== Linkerd Status ==="
+        kubectl get pods -n linkerd 2>/dev/null || echo "Linkerd not installed"
+        echo ""
+        echo "=== Network Policies ==="
+        kubectl get networkpolicies -n lms
+      register: security_status
+
+    - name: Display security status
+      debug:
+        msg: "{{ security_status.stdout_lines }}"

@@ -1,0 +1,36 @@
+# Deploy Argo Rollouts (Canary + Blue-Green)
+# Run: ansible-playbook -i inventory.yml playbooks/06-deploy-rollouts.yml
+---
+- name: Deploy Argo Rollouts Strategies
+  hosts: masters
+  become: yes
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  vars:
+    k8s_dir: /home/rajkumar/Documents/DevOps_Projects/Wso2/LMS/k8s
+  tasks:
+    - name: Copy Argo Rollouts manifest
+      copy:
+        src: "{{ k8s_dir }}/argocd-rollout.yml"
+        dest: /tmp/argocd-rollout.yml
+
+    - name: Deploy Argo Rollouts (Canary + Blue-Green)
+      shell: kubectl apply -f /tmp/argocd-rollout.yml
+      ignore_errors: yes
+
+    - name: Wait for rollouts
+      shell: sleep 20
+
+    - name: Verify Rollouts
+      shell: |
+        echo "=== Frontend Canary Rollout ==="
+        kubectl argo rollouts get rollout frontend-canary -n lms || echo "Not ready yet"
+        echo ""
+        echo "=== Catalog API Blue-Green Rollout ==="
+        kubectl argo rollouts get rollout catalog-api-bluegreen -n lms || echo "Not ready yet"
+      register: rollouts_status
+      ignore_errors: yes
+
+    - name: Display Rollouts status
+      debug:
+        msg: "{{ rollouts_status.stdout_lines }}"

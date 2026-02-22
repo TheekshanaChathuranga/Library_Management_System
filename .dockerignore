@@ -1,0 +1,51 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# CI/CD
+.github
+
+# Documentation
+*.md
+LICENSE
+
+# Docker
+docker-compose.yml
+Dockerfile
+.dockerignore
+
+# Kubernetes
+k8s/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+backend_logs.txt
+
+# Dependencies (will be restored during build)
+**/node_modules/
+**/bin/
+**/obj/
+
+# Test files
+**/*.Test/
+**/*.Tests/
+**/test/
+**/tests/
+
+# Build artifacts
+**/dist/
+**/build/
+**/publish/

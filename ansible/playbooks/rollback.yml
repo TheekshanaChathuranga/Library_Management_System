@@ -1,0 +1,46 @@
+# Ansible Playbook: Rollback Deployment
+# Use Case: Quick rollback when deployment fails
+# Run: ansible-playbook -i inventory.yml playbooks/rollback.yml -e "service=catalog-api"
+---
+- name: Rollback Deployment
+  hosts: masters
+  become: yes
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  vars:
+    service: "all"  # Default to all services, can override with -e "service=catalog-api"
+    namespace: "lms"
+  tasks:
+    - name: Get deployment history
+      shell: kubectl rollout history deployment/{{ item }} -n {{ namespace }}
+      loop: "{{ [service] if service != 'all' else ['catalog-api', 'inventory-api', 'useridentity-api', 'borrowingreturns-api', 'frontend'] }}"
+      register: rollout_history
+
+    - name: Display rollout history
+      debug:
+        msg: "{{ item.stdout_lines }}"
+      loop: "{{ rollout_history.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    - name: Rollback to previous revision
+      shell: kubectl rollout undo deployment/{{ item }} -n {{ namespace }}
+      loop: "{{ [service] if service != 'all' else ['catalog-api', 'inventory-api', 'useridentity-api', 'borrowingreturns-api', 'frontend'] }}"
+      register: rollback_result
+
+    - name: Wait for rollback to complete
+      shell: kubectl rollout status deployment/{{ item }} -n {{ namespace }} --timeout=300s
+      loop: "{{ [service] if service != 'all' else ['catalog-api', 'inventory-api', 'useridentity-api', 'borrowingreturns-api', 'frontend'] }}"
+      ignore_errors: yes
+
+    - name: Verify rollback
+      shell: kubectl get pods -n {{ namespace }} -l app={{ item }}
+      loop: "{{ [service] if service != 'all' else ['catalog-api', 'inventory-api', 'useridentity-api', 'borrowingreturns-api', 'frontend'] }}"
+      register: pod_status
+
+    - name: Display pod status after rollback
+      debug:
+        msg: "{{ item.stdout_lines }}"
+      loop: "{{ pod_status.results }}"
+      loop_control:
+        label: "{{ item.item }}"

@@ -1,0 +1,230 @@
+# Complete LMS Deployment - Using K8s Manifests
+# Run: ansible-playbook -i inventory.yml playbooks/deploy-complete-lms.yml
+---
+- name: Deploy Complete LMS Stack
+  hosts: masters
+  become: yes
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  vars:
+    k8s_dir: /home/rajkumar/Documents/DevOps_Projects/Wso2/LMS/k8s
+  tasks:
+    # ============================================
+    # 1. Install ArgoCD via Helm
+    # ============================================
+    - name: Add ArgoCD Helm repo
+      shell: |
+        helm repo add argo https://argoproj.github.io/argo-helm
+        helm repo update
+      ignore_errors: yes
+
+    - name: Install ArgoCD
+      shell: |
+        helm install argocd argo/argo-cd \
+          --namespace argocd \
+          --create-namespace \
+          --set server.service.type=NodePort \
+          --set server.service.nodePortHttp=30080 \
+          --wait --timeout 10m || echo "ArgoCD already installed"
+      ignore_errors: yes
+
+    # ============================================
+    # 2. Install Argo Rollouts via Helm
+    # ============================================
+    - name: Install Argo Rollouts
+      shell: |
+        helm install argo-rollouts argo/argo-rollouts \
+          --namespace argo-rollouts \
+          --create-namespace \
+          --wait --timeout 5m || echo "Argo Rollouts already installed"
+      ignore_errors: yes
+
+    - name: Install Argo Rollouts kubectl plugin
+      shell: |
+        curl -LO https://github.com/argoproj/argo-rollouts/releases/latest/download/kubectl-argo-rollouts-linux-amd64
+        chmod +x kubectl-argo-rollouts-linux-amd64
+        mv kubectl-argo-rollouts-linux-amd64 /usr/local/bin/kubectl-argo-rollouts
+      args:
+        creates: /usr/local/bin/kubectl-argo-rollouts
+
+    # ============================================
+    # 3. Install NGINX Ingress via Helm
+    # ============================================
+    - name: Add NGINX Ingress Helm repo
+      shell: |
+        helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+        helm repo update
+      ignore_errors: yes
+
+    - name: Install NGINX Ingress Controller
+      shell: |
+        helm install ingress-nginx ingress-nginx/ingress-nginx \
+          --namespace ingress-nginx \
+          --create-namespace \
+          --set controller.service.type=NodePort \
+          --set controller.service.nodePorts.http=31307 \
+          --set controller.service.nodePorts.https=32299 \
+          --wait --timeout 5m || echo "NGINX Ingress already installed"
+      ignore_errors: yes
+
+    # ============================================
+    # 4. Deploy Database Layer (PostgreSQL + Redis)
+    # ============================================
+    - name: Copy PostgreSQL manifests
+      copy:
+        src: "{{ item }}"
+        dest: /tmp/
+      loop:
+        - "{{ k8s_dir }}/namespace.yml"
+        - "{{ k8s_dir }}/postgres-secret.yml"
+        - "{{ k8s_dir }}/postgres-pvc.yml"
+        - "{{ k8s_dir }}/postgres.yml"
+        - "{{ k8s_dir }}/redis.yml"
+
+    - name: Deploy Database Layer
+      shell: |
+        kubectl apply -f /tmp/namespace.yml
+        kubectl apply -f /tmp/postgres-secret.yml
+        kubectl apply -f /tmp/postgres-pvc.yml
+        kubectl apply -f /tmp/postgres.yml
+        kubectl apply -f /tmp/redis.yml
+
+    - name: Wait for PostgreSQL
+      shell: kubectl wait --for=condition=ready pod -l app=postgres -n lms --timeout=300s
+      ignore_errors: yes
+
+    - name: Wait for Redis
+      shell: kubectl wait --for=condition=ready pod -l app=redis -n lms --timeout=300s
+      ignore_errors: yes
+
+    # ============================================
+    # 5. Deploy Application Services
+    # ============================================
+    - name: Copy Application manifests
+      copy:
+        src: "{{ item }}"
+        dest: /tmp/
+      loop:
+        - "{{ k8s_dir }}/catalog-api.yml"
+        - "{{ k8s_dir }}/inventory-api.yml"
+        - "{{ k8s_dir }}/useridentity-api.yml"
+        - "{{ k8s_dir }}/borrowingreturns-api.yml"
+        - "{{ k8s_dir }}/frontend-configmap.yml"
+        - "{{ k8s_dir }}/frontend.yml"
+
+    - name: Deploy Application Services
+      shell: |
+        kubectl apply -f /tmp/catalog-api.yml
+        kubectl apply -f /tmp/inventory-api.yml
+        kubectl apply -f /tmp/useridentity-api.yml
+        kubectl apply -f /tmp/borrowingreturns-api.yml
+        kubectl apply -f /tmp/frontend-configmap.yml
+        kubectl apply -f /tmp/frontend.yml
+
+    # ============================================
+    # 6. Deploy Argo Rollouts (Canary + Blue-Green)
+    # ============================================
+    - name: Copy Argo Rollouts manifest
+      copy:
+        src: "{{ k8s_dir }}/argocd-rollout.yml"
+        dest: /tmp/argocd-rollout.yml
+
+    - name: Deploy Argo Rollouts
+      shell: kubectl apply -f /tmp/argocd-rollout.yml
+      ignore_errors: yes
+
+    # ============================================
+    # 7. Deploy Ingress Routes
+    # ============================================
+    - name: Copy Ingress Routes manifest
+      copy:
+        src: "{{ k8s_dir }}/ingress-routes.yml"
+        dest: /tmp/ingress-routes.yml
+
+    - name: Deploy Ingress Routes
+      shell: kubectl apply -f /tmp/ingress-routes.yml
+
+    # ============================================
+    # 8. Deploy HPA (Horizontal Pod Autoscaler)
+    # ============================================
+    - name: Copy HPA manifest
+      copy:
+        src: "{{ k8s_dir }}/hpa.yml"
+        dest: /tmp/hpa.yml
+
+    - name: Deploy HPA
+      shell: kubectl apply -f /tmp/hpa.yml
+      ignore_errors: yes
+
+    # ============================================
+    # 9. Deploy Prometheus ServiceMonitors
+    # ============================================
+    - name: Copy Prometheus ServiceMonitors
+      copy:
+        src: "{{ k8s_dir }}/prometheus-servicemonitors.yml"
+        dest: /tmp/prometheus-servicemonitors.yml
+
+    - name: Deploy Prometheus ServiceMonitors
+      shell: kubectl apply -f /tmp/prometheus-servicemonitors.yml
+      ignore_errors: yes
+
+    # ============================================
+    # 10. Deploy ArgoCD Application (GitOps)
+    # ============================================
+    - name: Copy ArgoCD Application manifest
+      copy:
+        src: "{{ k8s_dir }}/argocd-application.yml"
+        dest: /tmp/argocd-application.yml
+
+    - name: Wait for ArgoCD to be ready
+      shell: kubectl wait --for=condition=available --timeout=600s deployment/argocd-server -n argocd
+      ignore_errors: yes
+
+    - name: Deploy ArgoCD Application
+      shell: kubectl apply -f /tmp/argocd-application.yml
+      ignore_errors: yes
+
+    # ============================================
+    # Verification
+    # ============================================
+    - name: Get ArgoCD admin password
+      shell: kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+      register: argocd_password
+      ignore_errors: yes
+
+    - name: Get all pods
+      shell: kubectl get pods -A -o wide
+      register: all_pods
+
+    - name: Get all services
+      shell: kubectl get svc -A | grep NodePort
+      register: all_services
+
+    - name: Display deployment summary
+      debug:
+        msg:
+          - "=========================================="
+          - "LMS DEPLOYMENT COMPLETE!"
+          - "=========================================="
+          - ""
+          - "Master IP: {{ ansible_host }}"
+          - ""
+          - "=== Access URLs ==="
+          - "ArgoCD:      http://{{ ansible_host }}:30080"
+          - "  Username:  admin"
+          - "  Password:  {{ argocd_password.stdout }}"
+          - ""
+          - "Grafana:     http://{{ ansible_host }}:30000"
+          - "  Username:  admin"
+          - "  Password:  admin123"
+          - ""
+          - "Prometheus:  http://{{ ansible_host }}:30090"
+          - "OpenSearch:  http://{{ ansible_host }}:30601"
+          - "Vault:       http://{{ ansible_host }}:30820"
+          - "LMS App:     http://{{ ansible_host }}:31307"
+          - ""
+          - "=== All Pods ==="
+          - "{{ all_pods.stdout_lines }}"
+          - ""
+          - "=== NodePort Services ==="
+          - "{{ all_services.stdout_lines }}"

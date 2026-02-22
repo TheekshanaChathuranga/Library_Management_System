@@ -1,0 +1,218 @@
+# Prometheus ServiceMonitors for LMS Application Monitoring
+# These tell Prometheus how to scrape metrics from each service
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: catalog-api-monitor
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: catalog-api
+  namespaceSelector:
+    matchNames:
+    - lms
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: inventory-api-monitor
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: inventory-api
+  namespaceSelector:
+    matchNames:
+    - lms
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: useridentity-api-monitor
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: useridentity-api
+  namespaceSelector:
+    matchNames:
+    - lms
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: borrowingreturns-api-monitor
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: borrowingreturns-api
+  namespaceSelector:
+    matchNames:
+    - lms
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: frontend-monitor
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: frontend
+  namespaceSelector:
+    matchNames:
+    - lms
+  endpoints:
+  - port: http
+    path: /stub_status
+    interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: redis-monitor
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: redis
+  namespaceSelector:
+    matchNames:
+    - lms
+  endpoints:
+  - port: redis
+    interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: postgres-monitor
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  selector:
+    matchLabels:
+      app: postgres
+  namespaceSelector:
+    matchNames:
+    - lms
+  endpoints:
+  - port: postgres
+    interval: 30s
+---
+# PrometheusRule for LMS Alerts
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: lms-alerts
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  groups:
+  - name: lms-application
+    rules:
+    # High Error Rate Alert
+    - alert: HighErrorRate
+      expr: |
+        sum(rate(http_requests_total{status=~"5..",namespace="lms"}[5m])) 
+        / sum(rate(http_requests_total{namespace="lms"}[5m])) > 0.05
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "High error rate in LMS application"
+        description: "Error rate is above 5% for more than 5 minutes"
+    
+    # Pod Not Ready Alert
+    - alert: PodNotReady
+      expr: |
+        kube_pod_status_ready{namespace="lms",condition="true"} == 0
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Pod {{ $labels.pod }} is not ready"
+        description: "Pod has been in non-ready state for more than 5 minutes"
+    
+    # High Memory Usage Alert
+    - alert: HighMemoryUsage
+      expr: |
+        container_memory_usage_bytes{namespace="lms"} 
+        / container_spec_memory_limit_bytes{namespace="lms"} > 0.9
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High memory usage in {{ $labels.pod }}"
+        description: "Memory usage is above 90%"
+    
+    # High CPU Usage Alert
+    - alert: HighCPUUsage
+      expr: |
+        rate(container_cpu_usage_seconds_total{namespace="lms"}[5m]) 
+        / container_spec_cpu_quota{namespace="lms"} * 100000 > 80
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High CPU usage in {{ $labels.pod }}"
+        description: "CPU usage is above 80%"
+    
+    # Database Connection Alert
+    - alert: DatabaseConnectionFailed
+      expr: |
+        pg_up{namespace="lms"} == 0
+      for: 1m
+      labels:
+        severity: critical
+      annotations:
+        summary: "PostgreSQL database is down"
+        description: "Cannot connect to PostgreSQL database"
+    
+    # Redis Connection Alert
+    - alert: RedisConnectionFailed
+      expr: |
+        redis_up{namespace="lms"} == 0
+      for: 1m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Redis is down"
+        description: "Cannot connect to Redis cache"

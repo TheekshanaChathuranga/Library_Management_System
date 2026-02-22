@@ -1,0 +1,40 @@
+# Deploy ArgoCD via Helm
+# Run: ansible-playbook -i inventory.yml playbooks/01-deploy-argocd.yml
+---
+- name: Deploy ArgoCD
+  hosts: masters
+  become: yes
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  tasks:
+    - name: Add ArgoCD Helm repo
+      shell: |
+        helm repo add argo https://argoproj.github.io/argo-helm
+        helm repo update
+      ignore_errors: yes
+
+    - name: Install ArgoCD
+      shell: |
+        helm install argocd argo/argo-cd \
+          --namespace argocd \
+          --create-namespace \
+          --set server.service.type=NodePort \
+          --set server.service.nodePortHttp=30080 \
+          --wait --timeout 10m
+      ignore_errors: yes
+
+    - name: Wait for ArgoCD to be ready
+      shell: kubectl wait --for=condition=available --timeout=600s deployment/argocd-server -n argocd
+      ignore_errors: yes
+
+    - name: Get ArgoCD admin password
+      shell: kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+      register: argocd_password
+      ignore_errors: yes
+
+    - name: Display ArgoCD info
+      debug:
+        msg:
+          - "ArgoCD URL: http://{{ ansible_host }}:30080"
+          - "Username: admin"
+          - "Password: {{ argocd_password.stdout }}"

@@ -1,0 +1,55 @@
+argocd_url = "http://3.215.79.20:30080"
+cluster_info = <<EOT
+  
+╔════════════════════════════════════════════════════════════════╗
+║           K3s Cluster Created Successfully! 🎉                 ║
+╚════════════════════════════════════════════════════════════════╝
+  
+📍 Master Node:
+   Public IP:  3.215.79.20
+   Private IP: 172.31.66.16
+  
+📍 Worker Nodes:
+   Public IPs:  44.222.87.148, 3.238.51.137
+   Private IPs: 172.31.75.13, 172.31.75.3
+  
+⏰ IMPORTANT: Wait 5-10 minutes for cluster initialization
+  
+🌐 Access Points:
+   - LMS App:     http://3.215.79.20:31063
+   - ArgoCD UI:   http://3.215.79.20:30080
+   - Grafana UI:  http://3.215.79.20:30081
+   - OpenSearch:  http://3.215.79.20:30601
+   - Vault UI:    http://3.215.79.20:30820
+  
+🔑 SSH Access:
+   ssh -i ~/.ssh/library-k3s ubuntu@3.215.79.20
+  
+📥 Get Cluster Access:
+   terraform output -raw get_kubeconfig | bash
+   kubectl get nodes
+  
+✅ Next Steps:
+   1. Wait 5-10 minutes for initialization
+   2. Get kubeconfig: terraform output -raw get_kubeconfig | bash
+   3. Test cluster: kubectl get nodes
+   4. Deploy apps: cd ../ansible && ansible-playbook -i inventory.yml playbooks/deploy-lms-application.yml
+  
+
+EOT
+get_kubeconfig = "scp -i ~/.ssh/library-k3s ubuntu@3.215.79.20:/etc/rancher/k3s/k3s.yaml ~/.kube/config && sed -i 's/127.0.0.1/3.215.79.20/g' ~/.kube/config"
+grafana_url = "http://3.215.79.20:30081"
+lms_url = "http://3.215.79.20:31063"
+master_private_ip = "172.31.66.16"
+master_public_ip = "3.215.79.20"
+opensearch_url = "http://3.215.79.20:30601"
+ssh_to_master = "ssh -i ~/.ssh/library-k3s ubuntu@3.215.79.20"
+vault_url = "http://3.215.79.20:30820"
+worker_private_ips = [
+  "172.31.75.13",
+  "172.31.75.3",
+]
+worker_public_ips = [
+  "44.222.87.148",
+  "3.238.51.137",
+]

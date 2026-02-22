@@ -1,0 +1,42 @@
+# Deploy LMS Application Services
+# Run: ansible-playbook -i inventory.yml playbooks/05-deploy-lms-services.yml
+---
+- name: Deploy LMS Application Services
+  hosts: masters
+  become: yes
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  vars:
+    k8s_dir: /home/rajkumar/Documents/DevOps_Projects/Wso2/LMS/k8s
+  tasks:
+    - name: Copy Application manifests
+      copy:
+        src: "{{ item }}"
+        dest: /tmp/
+      loop:
+        - "{{ k8s_dir }}/catalog-api.yml"
+        - "{{ k8s_dir }}/inventory-api.yml"
+        - "{{ k8s_dir }}/useridentity-api.yml"
+        - "{{ k8s_dir }}/borrowingreturns-api.yml"
+        - "{{ k8s_dir }}/frontend-configmap.yml"
+        - "{{ k8s_dir }}/frontend.yml"
+
+    - name: Deploy Application Services
+      shell: |
+        kubectl apply -f /tmp/catalog-api.yml
+        kubectl apply -f /tmp/inventory-api.yml
+        kubectl apply -f /tmp/useridentity-api.yml
+        kubectl apply -f /tmp/borrowingreturns-api.yml
+        kubectl apply -f /tmp/frontend-configmap.yml
+        kubectl apply -f /tmp/frontend.yml
+
+    - name: Wait for services to be ready
+      shell: sleep 30
+
+    - name: Verify Application Services
+      shell: kubectl get pods -n lms
+      register: app_pods
+
+    - name: Display Application status
+      debug:
+        msg: "{{ app_pods.stdout_lines }}"

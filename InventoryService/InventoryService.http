@@ -1,0 +1,35 @@
+@InventoryService_HostAddress = http://localhost:5002
+
+### List inventory summaries
+GET {{InventoryService_HostAddress}}/api/inventory
+Accept: application/json
+
+### Create inventory record (BookId must exist in CatalogService)
+POST {{InventoryService_HostAddress}}/api/inventory
+Content-Type: application/json
+
+{
+  "bookId": "33333333-3333-3333-3333-333333333333",
+  "physicalTotal": 4,
+  "digitalTotal": 20
+}### Borrow a physical copy
+POST {{InventoryService_HostAddress}}/api/inventory/33333333-3333-3333-3333-333333333333/borrow
+Content-Type: application/json
+
+{
+	"quantity": 1,
+	"channel": 0,
+	"reference": "loan-123"
+}
+
+### Return a digital copy
+POST {{InventoryService_HostAddress}}/api/inventory/33333333-3333-3333-3333-333333333333/return
+Content-Type: application/json
+
+{
+	"quantity": 1,
+	"channel": 1,
+	"reference": "return-123"
+}
+
+###

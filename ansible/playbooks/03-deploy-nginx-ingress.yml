@@ -1,0 +1,37 @@
+# Deploy NGINX Ingress Controller via Helm
+# Run: ansible-playbook -i inventory.yml playbooks/03-deploy-nginx-ingress.yml
+---
+- name: Deploy NGINX Ingress Controller
+  hosts: masters
+  become: yes
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  tasks:
+    - name: Add NGINX Ingress Helm repo
+      shell: |
+        helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+        helm repo update
+      ignore_errors: yes
+
+    - name: Install NGINX Ingress Controller
+      shell: |
+        helm install ingress-nginx ingress-nginx/ingress-nginx \
+          --namespace ingress-nginx \
+          --create-namespace \
+          --set controller.service.type=NodePort \
+          --set controller.service.nodePorts.http=31307 \
+          --set controller.service.nodePorts.https=32299 \
+          --wait --timeout 5m
+      ignore_errors: yes
+
+    - name: Wait for NGINX Ingress to be ready
+      shell: kubectl wait --namespace ingress-nginx --for=condition=ready pod --selector=app.kubernetes.io/component=controller --timeout=300s
+      ignore_errors: yes
+
+    - name: Verify NGINX Ingress
+      shell: kubectl get pods -n ingress-nginx
+      register: ingress_pods
+
+    - name: Display NGINX Ingress status
+      debug:
+        msg: "{{ ingress_pods.stdout_lines }}"

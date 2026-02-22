@@ -1,0 +1,131 @@
+# LMS Application Ingress Routes
+# Note: NGINX Ingress Controller is installed separately
+---
+# LMS Application Ingress Rules
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: lms-ingress
+  namespace: lms
+  annotations:
+    argocd.argoproj.io/sync-options: "Prune=false"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+spec:
+  ingressClassName: nginx
+  rules:
+  - http:
+      paths:
+      # Auth API - Must be first
+      - path: /api/auth
+        pathType: Prefix
+        backend:
+          service:
+            name: useridentity-api
+            port:
+              number: 8080
+      # Users API
+      - path: /api/users
+        pathType: Prefix
+        backend:
+          service:
+            name: useridentity-api
+            port:
+              number: 8080
+      # Books API
+      - path: /api/books
+        pathType: Prefix
+        backend:
+          service:
+            name: catalog-api
+            port:
+              number: 8080
+      # Catalog API
+      - path: /api/catalog
+        pathType: Prefix
+        backend:
+          service:
+            name: catalog-api
+            port:
+              number: 8080
+      # Inventory API
+      - path: /api/inventory
+        pathType: Prefix
+        backend:
+          service:
+            name: inventory-api
+            port:
+              number: 8080
+      # Loans/Borrowing API
+      - path: /api/loans
+        pathType: Prefix
+        backend:
+          service:
+            name: borrowingreturns-api
+            port:
+              number: 8080
+      # Borrowing API
+      - path: /api/borrowing
+        pathType: Prefix
+        backend:
+          service:
+            name: borrowingreturns-api
+            port:
+              number: 8080
+      # Frontend - Must be LAST to catch all other routes
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend
+            port:
+              number: 80
+---
+# Grafana Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana-ingress
+  namespace: monitoring
+  annotations:
+    argocd.argoproj.io/sync-options: "Prune=false"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: grafana.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: prometheus-grafana
+            port:
+              number: 80
+---
+# OpenSearch Dashboards Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: opensearch-ingress
+  namespace: logging
+  annotations:
+    argocd.argoproj.io/sync-options: "Prune=false"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: opensearch.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: opensearch-dashboards
+            port:
+              number: 5601

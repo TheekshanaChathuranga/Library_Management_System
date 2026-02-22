@@ -1,0 +1,76 @@
+# Ansible Playbook: Deploy Monitoring Stack
+# Use Case: Install Prometheus, Grafana, OpenSearch consistently
+# Run: ansible-playbook -i inventory.yml playbooks/deploy-monitoring.yml
+---
+- name: Deploy Monitoring Stack
+  hosts: masters
+  become: yes
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  vars:
+    k8s_manifests_path: "{{ playbook_dir }}/../../cicd_pipeline/LMS/k8s"
+  tasks:
+    # ============================================
+    # Deploy Prometheus & Grafana via Helm
+    # ============================================
+    - name: Add Prometheus Helm repo
+      shell: |
+        helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+        helm repo update
+      ignore_errors: yes
+
+    - name: Install Prometheus Stack
+      shell: |
+        helm install prometheus prometheus-community/kube-prometheus-stack \
+          --namespace monitoring \
+          --set prometheus.prometheusSpec.retention=7d \
+          --set grafana.adminPassword=admin123 \
+          --set grafana.service.type=NodePort \
+          --set grafana.service.nodePort=30000 \
+          --set prometheus.service.type=NodePort \
+          --set prometheus.service.nodePort=30090 \
+          --wait --timeout 10m || echo "Prometheus already installed"
+      ignore_errors: yes
+
+    # ============================================
+    # Deploy OpenSearch using K8s manifests (not Helm)
+    # ============================================
+    - name: Copy OpenSearch manifest
+      copy:
+        src: /home/rajkumar/Documents/DevOps_Projects/Wso2/LMS/k8s/opensearch.yml
+        dest: /tmp/opensearch.yml
+      ignore_errors: yes
+
+    - name: Deploy OpenSearch
+      shell: kubectl apply -f /tmp/opensearch.yml
+      ignore_errors: yes
+
+    - name: Wait for OpenSearch to be ready
+      shell: kubectl wait --for=condition=ready pod -l app=opensearch -n logging --timeout=300s
+      ignore_errors: yes
+
+    - name: Copy Fluent Bit manifest
+      copy:
+        src: /home/rajkumar/Documents/DevOps_Projects/Wso2/LMS/k8s/fluent-bit.yml
+        dest: /tmp/fluent-bit.yml
+      ignore_errors: yes
+
+    - name: Deploy Fluent Bit
+      shell: kubectl apply -f /tmp/fluent-bit.yml
+      ignore_errors: yes
+
+    - name: Verify monitoring pods
+      shell: kubectl get pods -n monitoring -o wide
+      register: monitoring_pods
+
+    - name: Verify logging pods
+      shell: kubectl get pods -n logging -o wide
+      register: logging_pods
+
+    - name: Display monitoring status
+      debug:
+        msg: 
+          - "Monitoring Pods:"
+          - "{{ monitoring_pods.stdout_lines }}"
+          - "Logging Pods:"
+          - "{{ logging_pods.stdout_lines }}"

@@ -1,0 +1,31 @@
+# Setup ArgoCD Application (GitOps)
+# Run: ansible-playbook -i inventory.yml playbooks/10-setup-argocd-app.yml
+---
+- name: Setup ArgoCD Application
+  hosts: masters
+  become: yes
+  environment:
+    KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+  vars:
+    k8s_dir: /home/rajkumar/Documents/DevOps_Projects/Wso2/LMS/k8s
+  tasks:
+    - name: Copy ArgoCD Application manifest
+      copy:
+        src: "{{ k8s_dir }}/argocd-application.yml"
+        dest: /tmp/argocd-application.yml
+
+    - name: Deploy ArgoCD Application
+      shell: kubectl apply -f /tmp/argocd-application.yml
+      ignore_errors: yes
+
+    - name: Wait for ArgoCD Application
+      shell: sleep 10
+
+    - name: Verify ArgoCD Application
+      shell: kubectl get application -n argocd
+      register: argocd_app
+      ignore_errors: yes
+
+    - name: Display ArgoCD Application status
+      debug:
+        msg: "{{ argocd_app.stdout_lines }}"

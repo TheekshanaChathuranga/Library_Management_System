@@ -1,0 +1,56 @@
+# LMS DevOps Project .gitignore
+
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate*
+terraform/terraform.tfvars
+
+# Ansible
+ansible/inventory.yml
+ansible/playbooks/*/vars/
+ansible/roles/*/vars/
+
+# Kubernetes
+cicd_pipeline/LMS/k8s/*.log
+cicd_pipeline/LMS/k8s/backup/
+
+# Documentation (Local only)
+K8S_FILES_EXPLAINED.md
+LMS_PROJECT_SERVICES_LIST.md
+MASTER_GUIDE.md
+OPTIMIZATION_COMPLETE.md
+SETUP_VS_DEPLOY_DECISION.md
+TERRAFORM_VS_ANSIBLE_GUIDE.md
+VAULT_CREDENTIALS.md
+YAML_QUICK_REFERENCE.md
+
+# Scripts (Local only)
+deploy-all.sh
+
+# Secrets and credentials
+*.pem
+*.key
+*secret*
+*vault*
+*credentials*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Archive directory
+_archive/
