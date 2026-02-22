@@ -8,7 +8,7 @@ on:
 
 env:
   AWS_REGION: us-east-1
-  DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+  DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME || 'library-management' }}
 
 jobs:
   build-and-push:
@@ -47,6 +47,7 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Login to Docker Hub
+        if: secrets.DOCKER_USERNAME != '' && secrets.DOCKER_PASSWORD != ''
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
@@ -66,11 +67,14 @@ jobs:
           IMAGE_NAME: ${{ env.DOCKER_USERNAME }}/${{ matrix.service.name }}
           IMAGE_TAG: ${{ steps.image-tag.outputs.IMAGE_TAG }}
         run: |
-          # Build with both commit tag and latest
+          echo "Building image: ${IMAGE_NAME}:${IMAGE_TAG}"
+          echo "Dockerfile: ${{ matrix.service.dockerfile }}"
+          echo "Context: ${{ matrix.service.context }}"
           docker build \
             -t ${IMAGE_NAME}:${IMAGE_TAG} \
             -t ${IMAGE_NAME}:latest \
             -f ${{ matrix.service.dockerfile }} \
+            ${{ matrix.service.context }} || exit 1ile }} \
             ${{ matrix.service.context }}
 
       - name: Run Trivy vulnerability scanner
@@ -105,6 +109,7 @@ jobs:
             echo "⚠️ Critical vulnerabilities found but continuing for demo purposes"
 
       - name: Push Docker images to Docker Hub
+        if: secrets.DOCKER_USERNAME != '' && secrets.DOCKER_PASSWORD != ''
         env:
           IMAGE_NAME: ${{ env.DOCKER_USERNAME }}/${{ matrix.service.name }}
           IMAGE_TAG: ${{ steps.image-tag.outputs.IMAGE_TAG }}
@@ -114,6 +119,16 @@ jobs:
           docker push ${IMAGE_NAME}:latest
           echo "✅ Pushed ${IMAGE_NAME}:${IMAGE_TAG}"
           echo "✅ Pushed ${IMAGE_NAME}:latest"
+      
+      - name: Docker Build Success (No Push)
+        if: secrets.DOCKER_USERNAME == '' || secrets.DOCKER_PASSWORD == ''
+        env:
+          IMAGE_NAME: ${{ env.DOCKER_USERNAME }}/${{ matrix.service.name }}
+          IMAGE_TAG: ${{ steps.image-tag.outputs.IMAGE_TAG }}
+        run: |
+          echo "⚠️  Docker Hub credentials not configured"
+          echo "✅ Built image locally: ${IMAGE_NAME}:${IMAGE_TAG}"
+          echo "To push to Docker Hub, set DOCKER_USERNAME and DOCKER_PASSWORD secrets in GitHub"
 
       - name: Update Kubernetes manifest with new image tag
         if: github.ref == 'refs/heads/aws-pipeline' || github.ref == 'refs/heads/main'
